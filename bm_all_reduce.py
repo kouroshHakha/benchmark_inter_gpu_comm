@@ -2,11 +2,22 @@
 import argparse
 import os
 import time
+import socket
+
 
 import torch
 import torch.distributed as dist
 import ray
 from ray.util.placement_group import placement_group
+
+
+def get_free_port():
+    """Find and return a free port on the current node."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('', 0))
+        s.listen(1)
+        port = s.getsockname()[1]
+    return str(port)
 
 def benchmark_all_reduce(tensor, iters, warmup):
     # Warm-up iterations.
@@ -37,7 +48,6 @@ def run_all_reduce(rank, world_size, master_addr, master_port, tensor_size, iter
     os.environ["MASTER_PORT"] = master_port
     os.environ["WORLD_SIZE"] = str(world_size)
     os.environ["RANK"] = str(rank)
-    # (Optional) if using IB, set NCCL_IB_DISABLE=0; here we leave it as default.
 
     # Initialize the process group using NCCL.
     dist.init_process_group(backend="nccl")
@@ -73,29 +83,23 @@ if __name__ == "__main__":
         help="Number of elements in the tensor (default: 256M)",
     )
     parser.add_argument(
-        "--iters", type=int, default=20, help="Number of benchmark iterations (default: 20)"
+        "--iters", 
+        type=int, 
+        default=20, 
+        help="Number of benchmark iterations (default: 20)"
     )
     parser.add_argument(
-        "--warmup", type=int, default=5, help="Number of warmup iterations (default: 5)"
-    )
-    parser.add_argument(
-        "--master_addr",
-        type=str,
-        default="100.126.82.10",
-        help="IP address of the master node for rendezvous (default: 100.126.82.10)",
-    )
-    parser.add_argument(
-        "--master_port",
-        type=str,
-        default="29500",
-        help="Port number for the master node (default: 29500)",
+        "--warmup", 
+        type=int, 
+        default=5, 
+        help="Number of warmup iterations (default: 5)"
     )
     args = parser.parse_args()
 
-    # Initialize Ray. If running on a cluster, use ray.init(address="auto")
 
+    # (Optional) if using IB, set NCCL_IB_DISABLE=0; here we leave it as default.
     ray.init(runtime_env={
-        'py_executable': 'uv run --isolated --directory ./random_work',
+        'py_executable': 'uv run --isolated --directory ./benchmark_inter_gpu_comm',
         'working_dir': '/home/ray/default',
         'env_vars': {
             # 'NCCL_DEBUG': 'INFO',
@@ -105,6 +109,14 @@ if __name__ == "__main__":
             'NCCL_IB_DISABLE': '1',
         }
     })
+
+    # Get the master address automatically using Ray's API
+    master_addr = ray.util.get_node_ip_address()
+    # Get a free port
+    master_port = get_free_port()
+
+    print(f"Using master address: {master_addr}, port: {master_port}")
+
 
     # Create a placement group with one bundle per process.
     # Each bundle requests 1 CPU and 1 GPU.
@@ -118,8 +130,8 @@ if __name__ == "__main__":
         run_all_reduce.options(placement_group=pg).remote(
             rank,
             args.world_size,
-            args.master_addr,
-            args.master_port,
+            master_addr,
+            master_port,
             args.tensor_size,
             args.iters,
             args.warmup,
