@@ -1,0 +1,14 @@
+[project]
+
+name = "benchmark_inter_gpu_comm"
+
+version = "0.1"
+
+dependencies = [
+    "tqdm",
+    "numpy",
+    "torch",
+    "cupy-cuda12x",
+    "matplotlib",
+    "ray@https://github.com/anyscale/pcm-artifacts/releases/download/v0.2/ray-3.0.0.dev0-cp311-cp311-manylinux2014_x86_64.whl",
+]
